@@ -1,21 +1,22 @@
 #!/usr/bin/python3
 import argparse
+import glob
 import logging
 import sys
 import time
 from pathlib import Path
 
+import decord
 import numpy as np
 import torch
+from decord import VideoReader
 from yolov5.models.common import DetectMultiBackend
-from yolov5.utils.dataloaders import LoadImages
-from yolov5.utils.general import (
-    check_img_size,
-    non_max_suppression,
-)
+from yolov5.utils.general import check_img_size
 from yolov5.utils.torch_utils import select_device
 
 print(torch.__version__, torch.cuda.is_available())
+decord.bridge.set_bridge('torch')
+
 # yolov5 is terrible at configuring logging correctly, so we disable it altogether
 logging.disable(sys.maxsize)
 
@@ -35,7 +36,7 @@ parser.add_argument('-c', '--confidence', type=float, default=0.7, required=Fals
                     help='a fraction between 0 and 1, where 1.0 is really sure this is the object')
 parser.add_argument('-dd', '--device', type=str, default="0", required=False,
                     help="which device to choose, by default the first GPU (0). Can be any number or 'cpu' for CPU")
-parser.add_argument('-s', '--img-size', nargs='+', type=int, default=[640], help='inference size w,h')
+parser.add_argument('-s', '--img-size', nargs='+', type=int, default=[640, 384], help='inference size w,h')
 
 args = parser.parse_args()
 input_path = args.input
@@ -47,12 +48,11 @@ confidence = args.confidence
 imgsz = args.img_size
 imgsz *= 2 if len(imgsz) == 1 else 1
 ignore_set = set(args.ignore.split(','))
-include_set = set(args.include.split(',')) if args.include else None
-video_codec = "MP4V"
+include_set = set(args.include.split(','))
 
 device = select_device(device)
 model = DetectMultiBackend(weights, device=device, data="coco128_classes.yml")
-stride, names, pt = model.stride, model.names, model.pt
+stride, names = model.stride, model.names
 imgsz = check_img_size(imgsz, s=stride)
 
 
@@ -68,8 +68,8 @@ def rename_on_class_match(source_path: str, dtc: set):
 
 def predict_batch(batch) -> set:
     start = time.time()
-    stacked = np.stack(batch)
-    ix = torch.from_numpy(stacked).to(device).float()
+    # need normalize between 0-1 and permute into (batch, channel, h, w)
+    ix = batch.div(255).permute([0, 3, 1, 2]).to(device).float()
 
     # we can skip NMS since we don't care about the bounding boxes at all, thus the transfer back of the result
     # from the GPU is only an aggregated set of classes
@@ -78,36 +78,29 @@ def predict_batch(batch) -> set:
     predicted_classes = pred[pred[..., 4] > confidence][:, 5:].max(dim=1)[1].unique().cpu()
     s = set(map(lambda x: names[x], predicted_classes.numpy()))
     print("batch with %d images found [%s], took %s" % (len(batch), ", ".join(s), time.time() - start))
-    batch.clear()
     return s
 
 
-dataset = LoadImages(input_path, img_size=imgsz, stride=stride, auto=pt)
-last_vid_path = None
-batch = []
-detected_classes = set()
-for path, im, im0s, vid_cap, s in dataset:
-    # TODO include set early skip
-    # if len(detected_classes.intersection(include_set)) > 0:
+files = glob.glob(input_path + "/*.mp4")
 
-    if path != last_vid_path:
-        if len(batch) > 0:
-            # new video detected, clean the batch from the last video
-            detected_classes = detected_classes.union(predict_batch(batch))
-            rename_on_class_match(last_vid_path, detected_classes)
+for i in range(len(files)):
+    file = files[i]
 
-        detected_classes.clear()
-        last_vid_path = path
-        print("processing [%s]..." % path)
+    print("processing [%d/%d] [%s]..." % (i + 1, len(files), file))
+    # TODO we can try to use the GPU context here (provided we compile decord with CUDA)
+    vr = VideoReader(file, width=imgsz[0], height=imgsz[1])
+    frame_numbers = np.arange(0, len(vr))
+    ranges = [frame_numbers[i: i + batch_size] for i in range(0, len(frame_numbers), batch_size)]
+    detected_classes = set()
+    for r in ranges:
+        frames = vr.get_batch(r)
+        detected_classes = detected_classes.union(predict_batch(frames))
+        # short circuit if we're looking for a specific class that we've found already
+        if len(detected_classes.intersection(include_set)) > 0:
+            break
 
-    im = im / 255  # normalize between 0-1
-    batch.append(im)
-    if len(batch) >= batch_size:
-        detected_classes = detected_classes.union(predict_batch(batch))
-
-# overflow when len(batch) > 0
-if len(batch) > 0:
-    detected_classes = detected_classes.union(predict_batch(batch))
-    rename_on_class_match(last_vid_path, detected_classes)
+    # https://github.com/dmlc/decord/issues/222
+    del vr
+    rename_on_class_match(file, detected_classes)
 
 print("done")
