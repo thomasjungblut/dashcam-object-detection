@@ -14,3 +14,4 @@ psutil  # system utilization
 thop>=0.1.1  # FLOPs computation
 opencv-python>=4.4.0.46
 opencv-python-headless>=4.4.0.46
+ultralytics-yolov5=>0.1.1

@@ -7,10 +7,10 @@ It's not super quick currently, the back-and-forth copy of images and result is 
 
 # Requirements
 
-This runs from PyTorchHub, so follow the [installation for pytorch first](https://pytorch.org/get-started/locally/).
+This runs using pytorch, so follow the [installation for pytorch first](https://pytorch.org/get-started/locally/).
 
 Then install the remaining packages:
-> pip3 install requirements.txt
+> pip3 install -r requirements.txt
 
 # Usage
 
