@@ -1,9 +1,12 @@
 # dashcam-object-detection
 
-This script runs YOLOv5s object detection on a folder full of MP4 files. 
+This script runs YOLOv5s object detection on a folder full of MP4 files.
 This can be used to filter files where some action happens, or to find videos with funny objects in them.
 
-It's not super quick currently, the back-and-forth copy of images and result is taking quite some time and does not keep the GPU busy enough.
+The whole process is done entirely on the GPU, from decoding to detecting to getting the classes out again. It does
+utilize my RTX3090 pretty well with some headroom for bigger batches:
+
+![util.png](util.png)
 
 # Requirements
 
@@ -27,7 +30,15 @@ If you want to include certain classes however, you can pass `--include` with th
 
 > python3 filter_files.py -i DCIM/Normal -o DCIM/Detected/ --include car,truck,skateboard
 
-Once an included class was found, the video will be moved without further inference.  
+Once an included class was found, the video will be moved without further inference.
 
-You can change the batch size to match your RAM/VRAM usage by supplying `--batch-size`, currently the default is 512 images at once.
+If you have GPU support compiled into decord, you can also enable this via:
+> python3 filter_files.py --decord-gpu True
+
+by default, it will use the CPU to decode the frames, doing this whole process on the GPU as well brings additional
+performance.
+
+
+You can change the batch size to match your RAM/VRAM usage by supplying `--batch-size`, currently the default is 512
+images at once.
 

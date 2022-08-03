@@ -9,7 +9,7 @@ from pathlib import Path
 import decord
 import numpy as np
 import torch
-from decord import VideoReader
+from decord import VideoReader, gpu, cpu
 from yolov5.models.common import DetectMultiBackend
 from yolov5.utils.general import check_img_size
 from yolov5.utils.torch_utils import select_device
@@ -37,6 +37,8 @@ parser.add_argument('-c', '--confidence', type=float, default=0.7, required=Fals
 parser.add_argument('-dd', '--device', type=str, default="0", required=False,
                     help="which device to choose, by default the first GPU (0). Can be any number or 'cpu' for CPU")
 parser.add_argument('-s', '--img-size', nargs='+', type=int, default=[640, 384], help='inference size w,h')
+parser.add_argument('-gd', '--decord-gpu', type=bool, default=False, required=False,
+                    help='use decord GPU, must be built and installed beforehand')
 
 args = parser.parse_args()
 input_path = args.input
@@ -44,6 +46,7 @@ output_path = Path(args.output)
 weights = args.weights
 batch_size = args.batch_size
 device = args.device
+decord_gpu = args.decord_gpu
 confidence = args.confidence
 imgsz = args.img_size
 imgsz *= 2 if len(imgsz) == 1 else 1
@@ -87,8 +90,7 @@ for i in range(len(files)):
     file = files[i]
 
     print("processing [%d/%d] [%s]..." % (i + 1, len(files), file))
-    # TODO we can try to use the GPU context here (provided we compile decord with CUDA)
-    vr = VideoReader(file, width=imgsz[0], height=imgsz[1])
+    vr = VideoReader(file, ctx=gpu() if decord_gpu else cpu(), width=imgsz[0], height=imgsz[1])
     frame_numbers = np.arange(0, len(vr))
     ranges = [frame_numbers[i: i + batch_size] for i in range(0, len(frame_numbers), batch_size)]
     detected_classes = set()
