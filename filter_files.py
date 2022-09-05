@@ -2,6 +2,7 @@
 import argparse
 import glob
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -39,6 +40,10 @@ parser.add_argument('-dd', '--device', type=str, default="0", required=False,
 parser.add_argument('-s', '--img-size', nargs='+', type=int, default=[640, 384], help='inference size w,h')
 parser.add_argument('-gd', '--decord-gpu', type=bool, default=False, required=False,
                     help='use decord GPU, must be built and installed beforehand')
+parser.add_argument('-cp', '--class-path', type=bool, default=True, required=False,
+                    help='will move the input mp4 to a folder named after the recognized classes')
+parser.add_argument('-sm', '--sampling', type=int, default=1, required=False,
+                    help='uses only every n-th frame to classify')
 
 args = parser.parse_args()
 input_path = args.input
@@ -48,6 +53,8 @@ batch_size = args.batch_size
 device = args.device
 decord_gpu = args.decord_gpu
 confidence = args.confidence
+rename_by_class = args.class_path
+sampling = args.sampling
 imgsz = args.img_size
 imgsz *= 2 if len(imgsz) == 1 else 1
 ignore_set = set(args.ignore.split(','))
@@ -62,13 +69,23 @@ imgsz = check_img_size(imgsz, s=stride)
 def rename_on_class_match(source_path: str, dtc: set):
     p = Path(source_path)
     dtc = dtc.difference(ignore_set)
-    if len(dtc) > 0:
-        print("moving file [%s], detected [%s]" % (p.name, ", ".join(dtc)))
-        p.rename(output_path.joinpath(p.name))
-    else:
-        print("file [%s] has no detections, ignoring" % p.name)
+    if rename_by_class:
+        if len(dtc) > 0:
+            print("moving file [%s], detected [%s]" % (p.name, ", ".join(dtc)))
+            if rename_by_class:
+                folder = output_path.joinpath("_".join(sorted(dtc)))
+                os.makedirs(folder, exist_ok=True)
+                p.rename(folder.joinpath(p.name))
+            else:
+                p.rename(output_path.joinpath(p.name))
+        else:
+            print("file [%s] has no detections, moving to None" % p.name)
+            folder = output_path.joinpath("none")
+            os.makedirs(folder, exist_ok=True)
+            p.rename(folder.joinpath(p.name))
 
 
+# TODO(thomas): we could take a timelapse with the detected bounding boxes
 def predict_batch(batch) -> set:
     start = time.time()
     # need normalize between 0-1 and permute into (batch, channel, h, w)
@@ -92,6 +109,9 @@ for i in range(len(files)):
     print("processing [%d/%d] [%s]..." % (i + 1, len(files), file))
     vr = VideoReader(file, ctx=gpu() if decord_gpu else cpu(), width=imgsz[0], height=imgsz[1])
     frame_numbers = np.arange(0, len(vr))
+    if sampling > 1:
+        frame_numbers = frame_numbers[frame_numbers % sampling == 0]
+
     ranges = [frame_numbers[i: i + batch_size] for i in range(0, len(frame_numbers), batch_size)]
     detected_classes = set()
     for r in ranges:
